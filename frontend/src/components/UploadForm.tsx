@@ -5,6 +5,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MetaTag } from "@/components/TagChip";
 import { api, getToken, saveToken } from "@/lib/api";
+import { connectBrowserWallet, listModelWithWallet } from "@/lib/contracts";
+
+function slugify(input: string) {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
 
 export function UploadForm() {
   const router = useRouter();
@@ -23,28 +32,37 @@ export function UploadForm() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  async function ensureToken() {
-    const existing = getToken();
-    if (existing) return existing;
-    const wallet = await api.wallet(
-      `0x${Math.random().toString(16).slice(2, 6)}...${Math.random()
-        .toString(16)
-        .slice(2, 6)}`,
-      "CREATOR",
-    );
-    saveToken(wallet.token);
-    return wallet.token;
-  }
-
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setMessage(null);
+
     try {
-      const token = await ensureToken();
-      const res = await api.createModel(
+      const { address } = await connectBrowserWallet();
+
+      let token = getToken();
+      if (!token) {
+        const res = await api.wallet(address, "CREATOR");
+        saveToken(res.token);
+        token = res.token;
+      }
+
+      const slug = slugify(name);
+      const metadataURI = `https://NuvyraHub.local/metadata/${slug}.json`;
+
+      const { txHash } = await listModelWithWallet({
+        slug,
+        metadataURI,
+        priceEth: String(priceEth),
+        royaltyBps: 500,
+      });
+
+      const res = await api.chainListConfirm(
+        slug,
         {
+          txHash: txHash ?? `already-listed:${slug}`,
+          walletAddress: address,
           name,
           description,
           category,
@@ -52,10 +70,10 @@ export function UploadForm() {
           tags,
           priceEth,
           framework,
-          creator: "@VinciLabs",
         },
         token,
       );
+
       setMessage(`Published ${res.model.name}`);
       router.push(`/models/${res.model.slug}`);
     } catch (err) {
@@ -155,11 +173,10 @@ export function UploadForm() {
                 key={fw}
                 type="button"
                 onClick={() => setFramework(fw)}
-                className={`rounded-md px-3 py-2 text-sm ${
-                  framework === fw
-                    ? "bg-accent text-white"
-                    : "border border-border text-text-muted"
-                }`}
+                className={`rounded-md px-3 py-2 text-sm ${framework === fw
+                  ? "bg-accent text-white"
+                  : "border border-border text-text-muted"
+                  }`}
               >
                 {fw}
               </button>

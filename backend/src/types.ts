@@ -4,6 +4,7 @@ export type Model = {
   name: string;
   creator: string;
   address: string;
+  walletAddress?: string;
   category: string;
   categorySlug: string;
   tags: string[];

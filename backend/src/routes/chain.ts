@@ -10,7 +10,7 @@ import {
   getOnChainListing,
   listModelOnChain,
 } from "../chain/marketplace";
-import { findModel, store } from "../data/store";
+import { createModel, findModel, store } from "../data/store";
 import { optionalAuth, type AuthedRequest } from "../middleware/auth";
 
 export const chainRouter = Router();
@@ -52,27 +52,80 @@ chainRouter.get("/listing/:slug", async (req, res) => {
   }
 });
 
+const listSchema = z.object({
+  mode: z.enum(["relay", "confirm"]).default("relay"),
+  txHash: z.string().optional(),
+  walletAddress: z.string().optional(),
+  name: z.string().min(2).max(120).optional(),
+  description: z.string().min(10).max(2000).optional(),
+  category: z.string().optional(),
+  categorySlug: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  priceEth: z.number().optional(),
+  framework: z.enum(["PyTorch", "TensorFlow", "ONNX"]).optional(),
+});
+
 chainRouter.post("/list/:slug", optionalAuth, async (req: AuthedRequest, res) => {
+  const parsed = listSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "ValidationError", details: parsed.error.flatten() });
+    return;
+  }
+
+  if (parsed.data.mode === "confirm") {
+    if (!parsed.data.txHash || !parsed.data.walletAddress) {
+      res.status(400).json({ error: "ValidationError", message: "txHash and walletAddress required" });
+      return;
+    }
+    const txHash = parsed.data.txHash as string;
+    const walletAddress = parsed.data.walletAddress as string;
+
+    let model = findModel(req.params.slug);
+    if (!model) {
+      // TODO: we need to make sure the name/slug is unique as contract nrequire a unique slug
+      if (!parsed.data.name || !parsed.data.description) {
+        res.status(400).json({ error: "ValidationError", message: "name and description required for new model" });
+        return;
+      }
+      const createInput: Parameters<typeof createModel>[0] = {
+        name: parsed.data.name,
+        description: parsed.data.description,
+        category: parsed.data.category || "Uncategorized",
+        categorySlug: parsed.data.categorySlug || "other",
+        tags: parsed.data.tags || [],
+        priceEth: parsed.data.priceEth || 0,
+        creator: walletAddress,
+      };
+      if (parsed.data.framework) createInput.framework = parsed.data.framework;
+      model = createModel(createInput);
+    }
+
+    // stamping the real creator address
+    model.walletAddress = walletAddress;
+    model.address = walletAddress;
+    model.status = "Active";
+    model.updatedAt = new Date().toISOString();
+
+    const listing = {
+      id: randomUUID(),
+      modelSlug: model.slug,
+      walletAddress,
+      txHash,
+      createdAt: new Date().toISOString(),
+    };
+
+    res.status(201).json({ mode: "confirm", model, listing, txHash });
+    return;
+  }
+
+  // relay mode (unchanged)
   const model = findModel(req.params.slug);
   if (!model) {
     res.status(404).json({ error: "NotFound", message: "Model not found in API" });
     return;
   }
 
-  const mode = req.query.mode === "tx" ? "tx" : "relay";
-
   try {
-    if (mode === "tx") {
-      const tx = buildListTxRequest({
-        slug: model.slug,
-        metadataURI: `https://NuvyraHub.local/metadata/${model.slug}.json`,
-        priceEth: model.priceEth,
-        royaltyBps: 500,
-      });
-      res.json({ mode: "tx", tx, model });
-      return;
-    }
-
     const result = await listModelOnChain({
       slug: model.slug,
       metadataURI: `https://NuvyraHub.local/metadata/${model.slug}.json`,

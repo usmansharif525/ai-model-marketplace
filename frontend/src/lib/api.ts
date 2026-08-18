@@ -183,6 +183,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ mode: "confirm", ...body }),
     }),
+  chainListConfirm: (
+    slug: string,
+    body: {
+      txHash: string;
+      walletAddress: string;
+      name: string;
+      description: string;
+      category: string;
+      categorySlug: string;
+      tags: string[];
+      priceEth: number;
+      framework?: "PyTorch" | "TensorFlow" | "ONNX";
+    },
+    token: string,
+  ) =>
+    request<{ mode: string; model: ApiModel; txHash: string }>(
+      `/api/chain/list/${slug}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ mode: "confirm", ...body }),
+        token,
+      },
+    ),
 };
 
 export function saveToken(token: string) {
